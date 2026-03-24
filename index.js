@@ -30,12 +30,13 @@ async function setWebhook() {
   try {
     await axios.post(
       "https://api-merchant.payos.vn/confirm-webhook",
-      { webhookUrl: "https://qr-bot-ib4w.onrender.com/webhook" },
+      { webhookUrl: "https://qr-bot-ib4w.vibehost.vn/webhook" }, // ✅ VibeHost webhook
       {
         headers: {
           "x-client-id": process.env.PAYOS_CLIENT_ID,
           "x-api-key": process.env.PAYOS_API_KEY
-        }
+        },
+        timeout: 10000
       }
     );
     console.log("✅ Webhook OK");
@@ -94,7 +95,7 @@ client.on("messageCreate", async (msg) => {
           "x-api-key": process.env.PAYOS_API_KEY,
           "x-signature": signature
         },
-        timeout: 10000 // timeout 10s
+        timeout: 10000
       }
     );
 
