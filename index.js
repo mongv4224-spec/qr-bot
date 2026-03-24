@@ -5,6 +5,9 @@ const crypto = require("crypto");
 const express = require("express");
 const fs = require("fs");
 
+console.log("🔍 TOKEN CHECK:", process.env.TOKEN ? "OK" : "❌ NULL");
+
+// ===== DISCORD CLIENT =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -16,7 +19,7 @@ const client = new Client({
 const ALLOWED_ROLE = "1412802347821695026";
 let orders = {};
 
-// ================= AUTO SET WEBHOOK =================
+// ===== AUTO SET WEBHOOK =====
 async function setWebhook() {
   try {
     await axios.post(
@@ -31,24 +34,25 @@ async function setWebhook() {
         }
       }
     );
-    console.log("✅ Đã set webhook thành công");
+    console.log("✅ Webhook OK");
   } catch (err) {
-    console.log("❌ Lỗi set webhook:", err.response?.data || err.message);
+    console.log("⚠️ Webhook lỗi (bỏ qua):", err.response?.data || err.message);
   }
 }
-// ===================================================
 
+// ===== BOT READY =====
 client.on("ready", async () => {
   console.log(`🤖 Bot đã online: ${client.user.tag}`);
-  await setWebhook(); // 🔥 chạy khi bot bật
+  await setWebhook();
 });
 
+// ===== COMMAND QR =====
 client.on("messageCreate", async (msg) => {
   if (!msg.content.startsWith("!qr")) return;
   if (msg.author.bot) return;
 
   if (!msg.member.roles.cache.has(ALLOWED_ROLE)) {
-    return msg.reply("❌ Bạn không có quyền dùng lệnh này");
+    return msg.reply("❌ Bạn không có quyền dùng lệnh");
   }
 
   const args = msg.content.split(" ")[1];
@@ -57,7 +61,7 @@ client.on("messageCreate", async (msg) => {
   let amount = args.toLowerCase().replace("k", "000");
   amount = parseInt(amount);
 
-  if (isNaN(amount)) return msg.reply("❌ Số tiền không hợp lệ");
+  if (isNaN(amount)) return msg.reply("❌ Số tiền sai");
 
   const orderCode = Date.now();
 
@@ -96,9 +100,9 @@ client.on("messageCreate", async (msg) => {
     };
 
     const embed = new EmbedBuilder()
-      .setTitle("🧾 HOÁ ĐƠN THANH TOÁN")
+      .setTitle("🧾 HOÁ ĐƠN")
       .addFields(
-        { name: "👤 Khách hàng", value: `<@${msg.author.id}>` },
+        { name: "👤 Khách", value: `<@${msg.author.id}>` },
         { name: "💰 Số tiền", value: `${amount.toLocaleString()}đ` },
         { name: "🔢 Mã đơn", value: `${orderCode}` },
         { name: "⏳ Trạng thái", value: "Chờ thanh toán" }
@@ -109,14 +113,17 @@ client.on("messageCreate", async (msg) => {
     msg.reply({ embeds: [embed] });
 
   } catch (err) {
-    console.error(err.response?.data || err);
+    console.error("❌ Lỗi tạo QR:", err.response?.data || err.message);
     msg.reply("❌ Lỗi tạo QR");
   }
 });
 
-client.login(process.env.TOKEN);
+// ===== LOGIN (FIX LỖI) =====
+client.login(process.env.TOKEN)
+  .then(() => console.log("✅ Đã login Discord"))
+  .catch(err => console.error("❌ TOKEN LỖI:", err));
 
-// ================= WEBHOOK =================
+// ===== EXPRESS SERVER =====
 const app = express();
 app.use(express.json());
 
@@ -131,23 +138,26 @@ app.post("/webhook", async (req, res) => {
     try {
       const channel = await client.channels.fetch(order.channelId);
 
-      const successEmbed = new EmbedBuilder()
-        .setTitle("🧾 HOÁ ĐƠN ĐÃ THANH TOÁN")
+      const embed = new EmbedBuilder()
+        .setTitle("✅ ĐÃ THANH TOÁN")
         .addFields(
           { name: "👤 Khách", value: `<@${order.userId}>` },
           { name: "💰 Số tiền", value: `${order.amount.toLocaleString()}đ` },
-          { name: "🔢 Mã đơn", value: `${orderCode}` },
-          { name: "✅ Trạng thái", value: "Đã thanh toán" }
+          { name: "🔢 Mã", value: `${orderCode}` }
         )
         .setColor("Green");
 
-      await channel.send({ embeds: [successEmbed] });
+      await channel.send({ embeds: [embed] });
 
-      let history = JSON.parse(fs.readFileSync("./orders.json"));
+      let history = [];
+      try {
+        history = JSON.parse(fs.readFileSync("./orders.json"));
+      } catch {}
+
       history.push({
         user: order.userId,
         amount: order.amount,
-        orderCode: orderCode,
+        orderCode,
         time: Date.now()
       });
 
@@ -156,11 +166,18 @@ app.post("/webhook", async (req, res) => {
       delete orders[orderCode];
 
     } catch (err) {
-      console.error(err);
+      console.error("❌ Lỗi webhook:", err);
     }
   }
 
   res.sendStatus(200);
 });
 
-app.listen(3000, () => console.log("🌐 Webhook chạy cổng 3000"));
+app.listen(3000, () => {
+  console.log("🌐 Webhook chạy cổng 3000");
+});
+
+// ===== BẮT LỖI ẨN =====
+process.on("unhandledRejection", err => {
+  console.error("❌ Lỗi hệ thống:", err);
+});
