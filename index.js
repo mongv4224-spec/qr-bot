@@ -65,7 +65,10 @@ client.on("messageCreate", async (msg) => {
 
   let amount = args.toLowerCase().replace("k", "000");
   amount = parseInt(amount);
-  if (isNaN(amount)) return msg.reply("❌ Số tiền sai");
+
+  if (isNaN(amount) || amount < 1000) {
+    return msg.reply("❌ Số tiền không hợp lệ (≥ 1000đ)");
+  }
 
   const orderCode = Date.now();
   const body = {
@@ -90,9 +93,18 @@ client.on("messageCreate", async (msg) => {
           "x-client-id": process.env.PAYOS_CLIENT_ID,
           "x-api-key": process.env.PAYOS_API_KEY,
           "x-signature": signature
-        }
+        },
+        timeout: 10000 // timeout 10s
       }
     );
+
+    // Log toàn bộ response để debug nếu lỗi
+    console.log("✅ PayOS response:", res.data);
+
+    if (!res.data || !res.data.data || !res.data.data.qrCode) {
+      console.error("❌ PayOS trả dữ liệu không hợp lệ:", res.data);
+      return msg.reply("❌ Lỗi PayOS, không tạo được QR");
+    }
 
     const data = res.data.data;
 
@@ -116,7 +128,7 @@ client.on("messageCreate", async (msg) => {
     msg.reply({ embeds: [embed] });
   } catch (err) {
     console.error("❌ Lỗi tạo QR:", err.response?.data || err.message);
-    msg.reply("❌ Lỗi tạo QR");
+    msg.reply("❌ Lỗi tạo QR, kiểm tra log");
   }
 });
 
