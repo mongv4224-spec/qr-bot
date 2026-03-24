@@ -30,7 +30,7 @@ async function setWebhook() {
   try {
     await axios.post(
       "https://api-merchant.payos.vn/confirm-webhook",
-      { webhookUrl: "https://qr-bot-ib4w.vibehost.vn/webhook" }, // ✅ VibeHost webhook
+      { webhookUrl: "https://qr-bot.vibehost.vn/payos-webhook" }, // ✅ VibeHost webhook
       {
         headers: {
           "x-client-id": process.env.PAYOS_CLIENT_ID,
@@ -56,7 +56,6 @@ client.on("messageCreate", async (msg) => {
   if (!msg.content.startsWith("!qr")) return;
   if (msg.author.bot) return;
 
-  // Kiểm tra role
   if (!msg.member?.roles?.cache.has(ALLOWED_ROLE)) {
     return msg.reply("❌ Bạn không có quyền dùng lệnh");
   }
@@ -99,7 +98,6 @@ client.on("messageCreate", async (msg) => {
       }
     );
 
-    // Log toàn bộ response để debug nếu lỗi
     console.log("✅ PayOS response:", res.data);
 
     if (!res.data || !res.data.data || !res.data.data.qrCode) {
@@ -146,7 +144,8 @@ if (!process.env.TOKEN) {
 const app = express();
 app.use(express.json());
 
-app.post("/webhook", async (req, res) => {
+// ==== SỬA ROUTE PAYOS WEBHOOK ====
+app.post("/payos-webhook", async (req, res) => {
   const data = req.body;
 
   if (data.code === "00") {
