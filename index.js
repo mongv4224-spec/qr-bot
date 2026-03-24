@@ -13,17 +13,40 @@ const client = new Client({
   ]
 });
 
-// 🔐 ROLE ĐƯỢC PHÉP
 const ALLOWED_ROLE = "1412802347821695026";
-
-// lưu order tạm
 let orders = {};
+
+// ================= AUTO SET WEBHOOK =================
+async function setWebhook() {
+  try {
+    await axios.post(
+      "https://api-merchant.payos.vn/confirm-webhook",
+      {
+        webhookUrl: "https://qr-bot-ib4w.onrender.com/webhook"
+      },
+      {
+        headers: {
+          "x-client-id": process.env.PAYOS_CLIENT_ID,
+          "x-api-key": process.env.PAYOS_API_KEY
+        }
+      }
+    );
+    console.log("✅ Đã set webhook thành công");
+  } catch (err) {
+    console.log("❌ Lỗi set webhook:", err.response?.data || err.message);
+  }
+}
+// ===================================================
+
+client.on("ready", async () => {
+  console.log(`🤖 Bot đã online: ${client.user.tag}`);
+  await setWebhook(); // 🔥 chạy khi bot bật
+});
 
 client.on("messageCreate", async (msg) => {
   if (!msg.content.startsWith("!qr")) return;
   if (msg.author.bot) return;
 
-  // ❌ check role
   if (!msg.member.roles.cache.has(ALLOWED_ROLE)) {
     return msg.reply("❌ Bạn không có quyền dùng lệnh này");
   }
@@ -66,32 +89,24 @@ client.on("messageCreate", async (msg) => {
 
     const data = res.data.data;
 
-    // lưu order
     orders[orderCode] = {
       userId: msg.author.id,
       channelId: msg.channel.id,
       amount: amount
     };
 
-    // 🧾 INVOICE
     const embed = new EmbedBuilder()
       .setTitle("🧾 HOÁ ĐƠN THANH TOÁN")
       .addFields(
         { name: "👤 Khách hàng", value: `<@${msg.author.id}>` },
         { name: "💰 Số tiền", value: `${amount.toLocaleString()}đ` },
         { name: "🔢 Mã đơn", value: `${orderCode}` },
-        { name: "📅 Thời gian", value: `<t:${Math.floor(Date.now()/1000)}:F>` },
         { name: "⏳ Trạng thái", value: "Chờ thanh toán" }
       )
       .setImage(data.qrCode)
       .setColor("Yellow");
 
-    const sent = await msg.reply({ embeds: [embed] });
-
-    // auto xoá sau 5 phút
-    setTimeout(() => {
-      sent.delete().catch(() => {});
-    }, 5 * 60 * 1000);
+    msg.reply({ embeds: [embed] });
 
   } catch (err) {
     console.error(err.response?.data || err);
@@ -110,15 +125,12 @@ app.post("/webhook", async (req, res) => {
 
   if (data.code === "00") {
     const orderCode = data.data.orderCode;
-
     const order = orders[orderCode];
     if (!order) return res.sendStatus(200);
 
     try {
-      const user = await client.users.fetch(order.userId);
       const channel = await client.channels.fetch(order.channelId);
 
-      // ✅ INVOICE SUCCESS
       const successEmbed = new EmbedBuilder()
         .setTitle("🧾 HOÁ ĐƠN ĐÃ THANH TOÁN")
         .addFields(
@@ -130,9 +142,7 @@ app.post("/webhook", async (req, res) => {
         .setColor("Green");
 
       await channel.send({ embeds: [successEmbed] });
-      await user.send("🎉 Thanh toán thành công!");
 
-      // 📊 LƯU LỊCH SỬ
       let history = JSON.parse(fs.readFileSync("./orders.json"));
       history.push({
         user: order.userId,
