@@ -4,7 +4,7 @@ const express = require("express");
 const https = require("https");
 const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 
-// ===== EXPRESS =====
+// ===== SERVER =====
 const app = express();
 app.use(express.json());
 
@@ -23,14 +23,15 @@ client.once("ready", () => {
 
 client.login(process.env.DISCORD_TOKEN);
 
-// ===== CONFIG =====
+// ===== CONFIG BANK =====
 const BANK_ID = "970422";
 const ACCOUNT_NO = "0813729700";
 const ACCOUNT_NAME = "TRUONG VO THANH PHONG";
 
 // ===== CHECK ROLE =====
 function hasPermission(member) {
-    return member.roles.cache.has(process.env.ALLOWED_ROLE_ID);
+    return member.roles.cache.has(process.env.ALLOWED_ROLE_ID) ||
+           member.permissions.has("Administrator");
 }
 
 // ===== PARSE TIỀN =====
@@ -115,14 +116,22 @@ app.post("/webhook", async (req, res) => {
         const userId = match[1];
 
         try {
-            const guild = await client.guilds.fetch(process.env.GUILD_ID);
-            const member = await guild.members.fetch(userId);
+            // ===== LOG CHANNEL =====
+            const channel = await client.channels.fetch(process.env.LOG_CHANNEL_ID);
 
-            await member.roles.add(process.env.ROLE_ID);
+            await channel.send(
+                `💰 <@${userId}> đã thanh toán thành công!\n` +
+                `💵 Số tiền: ${data.data.amount?.toLocaleString("vi-VN") || "N/A"} VNĐ`
+            );
 
-            console.log("✅ Add role cho:", userId);
+            // ===== DM USER =====
+            const user = await client.users.fetch(userId);
+            await user.send("✅ Bạn đã thanh toán thành công!");
+
+            console.log("✅ Done:", userId);
+
         } catch (err) {
-            console.log("❌ Lỗi add role:", err);
+            console.log("❌ Lỗi:", err);
         }
     }
 
