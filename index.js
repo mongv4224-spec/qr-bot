@@ -10,16 +10,14 @@ const {
     PermissionsBitField
 } = require("discord.js");
 
-// ===== CHECK ENV =====
-if (!process.env.DISCORD_TOKEN) {
-    console.error("❌ Thiếu DISCORD_TOKEN");
-    process.exit(1);
-}
+// ===== CONFIG BANK =====
+const BANK_ID = "970422"; // MB Bank
+const ACCOUNT_NO = "0813729700";
+const ACCOUNT_NAME = "TRUONG VO THANH PHONG";
 
 // ===== SERVER =====
 const app = express();
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (req, res) => {
     res.send("✅ Bot + Webhook đang chạy");
@@ -40,7 +38,7 @@ client.once("ready", () => {
 
 client.login(process.env.DISCORD_TOKEN);
 
-// ===== LƯU PAYMENT =====
+// ===== STORE PAYMENT =====
 const pendingPayments = new Map();
 
 // ===== CHECK ROLE =====
@@ -51,7 +49,7 @@ function hasPermission(member) {
         member.permissions.has(PermissionsBitField.Flags.Administrator);
 }
 
-// ===== PARSE TIỀN =====
+// ===== PARSE MONEY =====
 function parseMoney(input) {
     if (!input) return 0;
     input = input.toLowerCase();
@@ -66,18 +64,14 @@ function parseMoney(input) {
 async function createPayment(amount, userId) {
     const orderCode = Date.now();
 
-    // 🔥 description NGẮN ≤ 25 ký tự
-    const shortDesc = `U${userId.slice(-6)}_${orderCode.toString().slice(-6)}`;
-
     const body = {
-        amount: amount,
+        amount,
         cancelUrl: "https://google.com",
-        description: shortDesc,
-        orderCode: orderCode,
+        description: `U${userId.slice(-6)}`, // ≤ 25 ký tự
+        orderCode,
         returnUrl: "https://google.com"
     };
 
-    // 🔥 SORT KEY
     const sortedKeys = Object.keys(body).sort();
     const dataString = sortedKeys.map(k => `${k}=${body[k]}`).join("&");
 
@@ -85,9 +79,6 @@ async function createPayment(amount, userId) {
         .createHmac("sha256", process.env.PAYOS_CHECKSUM_KEY)
         .update(dataString)
         .digest("hex");
-
-    console.log("📜 STRING:", dataString);
-    console.log("🔐 SIGN:", signature);
 
     const res = await fetch("https://api-merchant.payos.vn/v2/payment-requests", {
         method: "POST",
@@ -100,16 +91,29 @@ async function createPayment(amount, userId) {
     });
 
     const json = await res.json();
-    console.log("📦 PAYOS RESPONSE:", json);
 
     if (!json.data) {
-        throw new Error(json.desc || "PayOS lỗi");
+        console.log("❌ PayOS:", json);
+        throw new Error(json.desc);
     }
 
     return json.data;
 }
 
-// ===== LỆNH !qr =====
+// ===== GET QR BANK =====
+function getQR(amount, content) {
+    return new Promise((resolve, reject) => {
+        const url = `https://img.vietqr.io/image/${BANK_ID}-${ACCOUNT_NO}-compact.png?amount=${amount}&addInfo=${encodeURIComponent(content)}&accountName=${encodeURIComponent(ACCOUNT_NAME)}`;
+
+        https.get(url, (res) => {
+            const data = [];
+            res.on("data", chunk => data.push(chunk));
+            res.on("end", () => resolve(Buffer.concat(data)));
+        }).on("error", reject);
+    });
+}
+
+// ===== COMMAND !qr =====
 client.on("messageCreate", async (message) => {
     if (message.author.bot || !message.content.startsWith("!qr")) return;
 
@@ -123,22 +127,15 @@ client.on("messageCreate", async (message) => {
     try {
         const payment = await createPayment(amount, message.author.id);
 
-        // ===== QR =====
-        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payment.checkoutUrl)}`;
-
-        const qr = await new Promise((resolve, reject) => {
-            https.get(qrUrl, (res) => {
-                const data = [];
-                res.on("data", chunk => data.push(chunk));
-                res.on("end", () => resolve(Buffer.concat(data)));
-            }).on("error", reject);
-        });
+        const content = `PAY${payment.orderCode}`;
+        const qr = await getQR(amount, content);
 
         const embed = new EmbedBuilder()
             .setTitle("🔴 CHƯA THANH TOÁN")
             .setDescription(
                 `💵 **${amount.toLocaleString("vi-VN")} VNĐ**\n\n` +
-                `👉 ${payment.checkoutUrl}`
+                `📌 Nội dung CK: **${content}**\n\n` +
+                `🏦 ${ACCOUNT_NAME}\nMB Bank: ${ACCOUNT_NO}`
             )
             .setImage("attachment://qr.png")
             .setColor(0xff0000);
@@ -157,7 +154,7 @@ client.on("messageCreate", async (message) => {
 
     } catch (err) {
         console.log("❌ PayOS lỗi:", err.message);
-        message.reply("❌ Lỗi PayOS! Check log!");
+        message.reply("❌ Lỗi PayOS!");
     }
 });
 
@@ -191,9 +188,9 @@ app.post("/webhook", async (req, res) => {
                 log.send(`💰 <@${payment.userId}> đã thanh toán ${payment.amount}`);
             }
 
-            // DM
+            // DM USER
             const user = await client.users.fetch(payment.userId);
-            user.send("✅ Thanh toán thành công!");
+            user.send("✅ Bạn đã thanh toán thành công!");
 
             pendingPayments.delete(orderCode);
 
@@ -208,5 +205,5 @@ app.post("/webhook", async (req, res) => {
 // ===== START SERVER =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log("🌐 Server chạy:", PORT);
+    console.log("🌐 Server chạy cổng", PORT);
 });
