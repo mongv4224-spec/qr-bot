@@ -2,7 +2,7 @@ require("dotenv").config();
 
 const express = require("express");
 const https = require("https");
-const PayOS = require("@payos/node");
+const { PayOS } = require("@payos/node");   // ← Destructuring đúng cách
 
 const {
     Client,
@@ -16,12 +16,12 @@ const BANK_ID = "970422";           // MB Bank
 const ACCOUNT_NO = "0813729700";
 const ACCOUNT_NAME = "TRUONG VO THANH PHONG";
 
-// ===== PAYOS SDK =====
-const payOS = new PayOS(
-    process.env.PAYOS_CLIENT_ID,
-    process.env.PAYOS_API_KEY,
-    process.env.PAYOS_CHECKSUM_KEY
-);
+// ===== PAYOS SDK (Phiên bản mới) =====
+const payOS = new PayOS({
+    clientId: process.env.PAYOS_CLIENT_ID,
+    apiKey: process.env.PAYOS_API_KEY,
+    checksumKey: process.env.PAYOS_CHECKSUM_KEY
+});
 
 // ===== SERVER =====
 const app = express();
@@ -78,24 +78,29 @@ async function createPayment(amount, userId) {
         returnUrl: "https://google.com"
     };
 
-    const response = await fetch("https://api-merchant.payos.vn/v2/payment-requests", {
-        method: "POST",
-        headers: {
-            "x-client-id": process.env.PAYOS_CLIENT_ID,
-            "x-api-key": process.env.PAYOS_API_KEY,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body)
-    });
+    try {
+        const response = await fetch("https://api-merchant.payos.vn/v2/payment-requests", {
+            method: "POST",
+            headers: {
+                "x-client-id": process.env.PAYOS_CLIENT_ID,
+                "x-api-key": process.env.PAYOS_API_KEY,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(body)
+        });
 
-    const json = await response.json();
+        const json = await response.json();
 
-    if (!json.data) {
-        console.error("❌ PayOS Error:", json);
-        throw new Error(json.desc || "Không tạo được yêu cầu thanh toán");
+        if (!json.data) {
+            console.error("❌ PayOS Error:", json);
+            throw new Error(json.desc || "Không tạo được yêu cầu thanh toán");
+        }
+
+        return json.data;
+    } catch (err) {
+        console.error("❌ Lỗi createPayment:", err);
+        throw err;
     }
-
-    return json.data;
 }
 
 // ===== GET QR CODE =====
@@ -162,6 +167,7 @@ client.on("messageCreate", async (message) => {
 // ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
     try {
+        // Verify webhook với SDK phiên bản mới
         const webhookData = payOS.webhooks.verify(req.body);
 
         if (webhookData.code === "00" && webhookData.data?.orderCode) {
@@ -185,11 +191,11 @@ app.post("/webhook", async (req, res) => {
                 await msg.edit({ embeds: [successEmbed], files: [] });
             }
 
-            // Log channel
             const logChannel = await client.channels.fetch(process.env.LOG_CHANNEL_ID).catch(() => null);
-            if (logChannel) logChannel.send(`💰 <@${payment.userId}> đã thanh toán **${payment.amount.toLocaleString("vi-VN")} VNĐ**`);
+            if (logChannel) {
+                logChannel.send(`💰 <@${payment.userId}> đã thanh toán **${payment.amount.toLocaleString("vi-VN")} VNĐ**`);
+            }
 
-            // DM user
             const user = await client.users.fetch(payment.userId).catch(() => null);
             if (user) user.send("✅ Thanh toán thành công! Cảm ơn bạn.").catch(() => {});
 
@@ -215,8 +221,9 @@ client.on("messageCreate", (message) => {
     }
 });
 
-// ===== START =====
+// ===== START SERVER =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🌐 Server chạy trên port ${PORT}`);
+    console.log("🔗 Nhớ set Webhook URL trong PayOS Dashboard thành: https://your-domain.com/webhook");
 });
