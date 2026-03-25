@@ -3,21 +3,27 @@ require("dotenv").config();
 const express = require("express");
 const https = require("https");
 const crypto = require("crypto");
-const { 
-    Client, 
-    GatewayIntentBits, 
-    EmbedBuilder, 
-    PermissionsBitField 
+const {
+    Client,
+    GatewayIntentBits,
+    EmbedBuilder,
+    PermissionsBitField
 } = require("discord.js");
 
-// ===== CONFIG PAYOS =====
-const PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID;
-const PAYOS_API_KEY = process.env.PAYOS_API_KEY;
-const PAYOS_CHECKSUM_KEY = process.env.PAYOS_CHECKSUM_KEY;
+// ===== CHECK ENV =====
+if (!process.env.DISCORD_TOKEN) {
+    console.error("❌ Thiếu DISCORD_TOKEN");
+    process.exit(1);
+}
 
 // ===== SERVER =====
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.get("/", (req, res) => {
+    res.send("✅ Bot + Webhook đang chạy");
+});
 
 // ===== DISCORD =====
 const client = new Client({
@@ -34,7 +40,7 @@ client.once("ready", () => {
 
 client.login(process.env.DISCORD_TOKEN);
 
-// ===== LƯU MESSAGE =====
+// ===== LƯU PAYMENT =====
 const pendingPayments = new Map();
 
 // ===== CHECK ROLE =====
@@ -42,7 +48,7 @@ function hasPermission(member) {
     if (!member) return false;
 
     return member.roles.cache.has(process.env.ALLOWED_ROLE_ID) ||
-           member.permissions.has(PermissionsBitField.Flags.Administrator);
+        member.permissions.has(PermissionsBitField.Flags.Administrator);
 }
 
 // ===== PARSE TIỀN =====
@@ -56,7 +62,7 @@ function parseMoney(input) {
     return parseInt(input.replace(/[^0-9]/g, ""));
 }
 
-// ===== TẠO PAYOS =====
+// ===== CREATE PAYOS =====
 async function createPayment(amount, userId) {
     const orderCode = Date.now();
 
@@ -68,24 +74,39 @@ async function createPayment(amount, userId) {
         cancelUrl: "https://google.com"
     };
 
-    const dataString = `amount=${amount}&cancelUrl=${body.cancelUrl}&description=${body.description}&orderCode=${orderCode}&returnUrl=${body.returnUrl}`;
+    // 🔥 SIGNATURE CHUẨN
+    const dataString =
+        `amount=${amount}` +
+        `&cancelUrl=${body.cancelUrl}` +
+        `&description=${body.description}` +
+        `&orderCode=${orderCode}` +
+        `&returnUrl=${body.returnUrl}`;
 
     const signature = crypto
-        .createHmac("sha256", PAYOS_CHECKSUM_KEY)
+        .createHmac("sha256", process.env.PAYOS_CHECKSUM_KEY)
         .update(dataString)
         .digest("hex");
+
+    console.log("🔐 SIGN:", signature);
 
     const res = await fetch("https://api-merchant.payos.vn/v2/payment-requests", {
         method: "POST",
         headers: {
-            "x-client-id": PAYOS_CLIENT_ID,
-            "x-api-key": PAYOS_API_KEY,
+            "x-client-id": process.env.PAYOS_CLIENT_ID,
+            "x-api-key": process.env.PAYOS_API_KEY,
             "Content-Type": "application/json"
         },
         body: JSON.stringify({ ...body, signature })
     });
 
     const json = await res.json();
+
+    console.log("📦 PAYOS RESPONSE:", json);
+
+    if (!json.data) {
+        throw new Error(json.desc || "PayOS lỗi");
+    }
+
     return json.data;
 }
 
@@ -103,7 +124,7 @@ client.on("messageCreate", async (message) => {
     try {
         const payment = await createPayment(amount, message.author.id);
 
-        // tạo QR
+        // ===== QR =====
         const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payment.checkoutUrl)}`;
 
         const qr = await new Promise((resolve, reject) => {
@@ -118,7 +139,7 @@ client.on("messageCreate", async (message) => {
             .setTitle("🔴 CHƯA THANH TOÁN")
             .setDescription(
                 `💵 **${amount.toLocaleString("vi-VN")} VNĐ**\n\n` +
-                `📌 Link:\n${payment.checkoutUrl}`
+                `👉 ${payment.checkoutUrl}`
             )
             .setImage("attachment://qr.png")
             .setColor(0xff0000);
@@ -128,7 +149,6 @@ client.on("messageCreate", async (message) => {
             files: [{ attachment: qr, name: "qr.png" }]
         });
 
-        // lưu để update
         pendingPayments.set(payment.orderCode, {
             messageId: sent.id,
             channelId: sent.channel.id,
@@ -137,8 +157,8 @@ client.on("messageCreate", async (message) => {
         });
 
     } catch (err) {
-        console.log(err);
-        message.reply("❌ Lỗi PayOS!");
+        console.log("❌ PayOS lỗi:", err.message);
+        message.reply("❌ Lỗi PayOS! Check log!");
     }
 });
 
@@ -146,7 +166,7 @@ client.on("messageCreate", async (message) => {
 app.post("/webhook", async (req, res) => {
     const data = req.body;
 
-    console.log("📡 Webhook:", data);
+    console.log("📡 WEBHOOK:", data);
 
     if (data.code === "00" && data.data) {
         const orderCode = data.data.orderCode;
@@ -161,27 +181,26 @@ app.post("/webhook", async (req, res) => {
             const embed = new EmbedBuilder()
                 .setTitle("🟢 ĐÃ THANH TOÁN")
                 .setDescription(
-                    `💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n` +
-                    `✅ Thành công`
+                    `💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n✅ Thành công`
                 )
                 .setColor(0x00ff00);
 
             await msg.edit({ embeds: [embed], files: [] });
 
-            // log
+            // LOG
             const log = await client.channels.fetch(process.env.LOG_CHANNEL_ID);
             if (log) {
                 log.send(`💰 <@${payment.userId}> đã thanh toán ${payment.amount}`);
             }
 
-            // dm
+            // DM
             const user = await client.users.fetch(payment.userId);
             user.send("✅ Thanh toán thành công!");
 
             pendingPayments.delete(orderCode);
 
         } catch (err) {
-            console.log(err);
+            console.log("❌ Update lỗi:", err);
         }
     }
 
@@ -189,10 +208,6 @@ app.post("/webhook", async (req, res) => {
 });
 
 // ===== SERVER =====
-app.get("/", (req, res) => {
-    res.send("OK");
-});
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log("🌐 Server chạy:", PORT);
