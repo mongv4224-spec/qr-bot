@@ -17,7 +17,15 @@ if (!process.env.DISCORD_TOKEN) {
 
 // ===== SERVER =====
 const app = express();
+
+// 🔥 QUAN TRỌNG: nhận JSON + raw (PayOS cần)
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ===== TEST ROUTE =====
+app.get("/", (req, res) => {
+    res.send("✅ Bot + Webhook đang chạy");
+});
 
 // ===== DISCORD =====
 const client = new Client({
@@ -119,19 +127,20 @@ client.on("messageCreate", async (message) => {
 
 // ===== WEBHOOK PAYOS =====
 app.post("/webhook", async (req, res) => {
-    const data = req.body;
+    try {
+        const data = req.body;
 
-    console.log("📡 Webhook:", data);
+        console.log("📡 Webhook nhận:", JSON.stringify(data));
 
-    if (data.code === "00" && data.data) {
-        const content = data.data.description || "";
-        const match = content.match(/USER_(\d+)/);
+        // kiểm tra thành công
+        if (data.code === "00" && data.data) {
+            const content = data.data.description || "";
+            const match = content.match(/USER_(\d+)/);
 
-        if (!match) return res.sendStatus(200);
+            if (!match) return res.sendStatus(200);
 
-        const userId = match[1];
+            const userId = match[1];
 
-        try {
             // ===== LOG CHANNEL =====
             const channel = await client.channels.fetch(process.env.LOG_CHANNEL_ID);
 
@@ -146,14 +155,15 @@ app.post("/webhook", async (req, res) => {
             const user = await client.users.fetch(userId);
             await user.send("✅ Bạn đã thanh toán thành công!");
 
-            console.log("✅ Done:", userId);
-
-        } catch (err) {
-            console.log("❌ Lỗi:", err);
+            console.log("✅ Thanh toán xong:", userId);
         }
-    }
 
-    res.sendStatus(200);
+        res.sendStatus(200);
+
+    } catch (err) {
+        console.log("❌ Webhook lỗi:", err);
+        res.sendStatus(500);
+    }
 });
 
 // ===== SERVER =====
