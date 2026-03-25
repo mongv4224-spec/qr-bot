@@ -2,7 +2,18 @@ require("dotenv").config();
 
 const express = require("express");
 const https = require("https");
-const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    PermissionsBitField 
+} = require("discord.js");
+
+// ===== CHECK ENV =====
+if (!process.env.DISCORD_TOKEN) {
+    console.error("❌ Thiếu DISCORD_TOKEN");
+    process.exit(1);
+}
 
 // ===== SERVER =====
 const app = express();
@@ -30,12 +41,16 @@ const ACCOUNT_NAME = "TRUONG VO THANH PHONG";
 
 // ===== CHECK ROLE =====
 function hasPermission(member) {
+    if (!member) return false;
+
     return member.roles.cache.has(process.env.ALLOWED_ROLE_ID) ||
-           member.permissions.has("Administrator");
+           member.permissions.has(PermissionsBitField.Flags.Administrator);
 }
 
 // ===== PARSE TIỀN =====
 function parseMoney(input) {
+    if (!input) return 0;
+
     input = input.toLowerCase();
 
     if (input.includes("k")) return parseInt(input) * 1000;
@@ -51,6 +66,7 @@ async function generateQR(amount, addinfo) {
 
         https.get(url, (res) => {
             if (res.statusCode !== 200) return reject("QR lỗi");
+
             const data = [];
             res.on("data", chunk => data.push(chunk));
             res.on("end", () => resolve(Buffer.concat(data)));
@@ -96,7 +112,7 @@ client.on("messageCreate", async (message) => {
         });
 
     } catch (err) {
-        console.log(err);
+        console.log("❌ QR lỗi:", err);
         message.reply("❌ Lỗi tạo QR!");
     }
 });
@@ -107,8 +123,8 @@ app.post("/webhook", async (req, res) => {
 
     console.log("📡 Webhook:", data);
 
-    if (data.code === "00") {
-        const content = data.data?.description || "";
+    if (data.code === "00" && data.data) {
+        const content = data.data.description || "";
         const match = content.match(/USER_(\d+)/);
 
         if (!match) return res.sendStatus(200);
@@ -119,10 +135,12 @@ app.post("/webhook", async (req, res) => {
             // ===== LOG CHANNEL =====
             const channel = await client.channels.fetch(process.env.LOG_CHANNEL_ID);
 
-            await channel.send(
-                `💰 <@${userId}> đã thanh toán thành công!\n` +
-                `💵 Số tiền: ${data.data.amount?.toLocaleString("vi-VN") || "N/A"} VNĐ`
-            );
+            if (channel) {
+                await channel.send(
+                    `💰 <@${userId}> đã thanh toán thành công!\n` +
+                    `💵 Số tiền: ${data.data.amount?.toLocaleString("vi-VN") || "N/A"} VNĐ`
+                );
+            }
 
             // ===== DM USER =====
             const user = await client.users.fetch(userId);
