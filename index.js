@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const https = require("https");
 const crypto = require("crypto");
-const fetch = require("node-fetch"); // dùng node-fetch@2
+const fetch = require("node-fetch"); // node-fetch@2
 const {
     Client,
     GatewayIntentBits,
@@ -163,32 +163,36 @@ app.post("/webhook", async (req, res) => {
 
     if (data.code === "00" && data.data) {
         const orderCode = Number(data.data.orderCode);
+        console.log("🔎 orderCode:", orderCode);
+        console.log("📦 PendingPayments keys:", Array.from(pendingPayments.keys()));
+
         const payment = pendingPayments.get(orderCode);
+        console.log("📦 Payment found:", payment);
 
-        if (payment) {
-            try {
-                const channel = await client.channels.fetch(payment.channelId);
-                const msg = await channel.messages.fetch(payment.messageId).catch(() => null);
-                if (msg) {
-                    const embed = new EmbedBuilder()
-                        .setTitle("🟢 ĐÃ THANH TOÁN")
-                        .setDescription(`💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n✅ Thành công`)
-                        .setColor(0x00ff00);
-                    await msg.edit({ embeds: [embed], files: [] });
-                }
-
-                const log = await client.channels.fetch(process.env.LOG_CHANNEL_ID).catch(() => null);
-                if (log) log.send(`💰 <@${payment.userId}> đã thanh toán ${payment.amount}`);
-
-                const user = await client.users.fetch(payment.userId).catch(() => null);
-                if (user) user.send("✅ Bạn đã thanh toán thành công!");
-
-            } catch (err) {
-                console.log("❌ Update lỗi:", err);
-            }
-            pendingPayments.delete(orderCode);
-        } else {
+        if (!payment) {
             console.log("⚠️ Không tìm thấy orderCode trong pendingPayments");
+            return res.sendStatus(200);
+        }
+
+        try {
+            const channel = await client.channels.fetch(payment.channelId);
+            const msg = await channel.messages.fetch(payment.messageId);
+            const embed = new EmbedBuilder()
+                .setTitle("🟢 ĐÃ THANH TOÁN")
+                .setDescription(`💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n✅ Thành công`)
+                .setColor(0x00ff00);
+            await msg.edit({ embeds: [embed], files: [] });
+
+            const log = await client.channels.fetch(process.env.LOG_CHANNEL_ID).catch(() => null);
+            if (log) log.send(`💰 <@${payment.userId}> đã thanh toán ${payment.amount}`);
+
+            const user = await client.users.fetch(payment.userId).catch(() => null);
+            if (user) user.send("✅ Bạn đã thanh toán thành công!");
+
+            pendingPayments.delete(orderCode);
+
+        } catch (err) {
+            console.log("❌ Update lỗi:", err);
         }
     }
 
