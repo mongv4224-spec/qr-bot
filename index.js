@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const https = require("https");
 const crypto = require("crypto");
-const fetch = require("node-fetch");
+const fetch = require("node-fetch"); // node-fetch@2
 const {
     Client,
     GatewayIntentBits,
@@ -45,7 +45,6 @@ const pendingPayments = new Map();
 // ===== CHECK ROLE =====
 function hasPermission(member) {
     if (!member) return false;
-
     return member.roles.cache.has(process.env.ALLOWED_ROLE_ID) ||
         member.permissions.has(PermissionsBitField.Flags.Administrator);
 }
@@ -54,10 +53,8 @@ function hasPermission(member) {
 function parseMoney(input) {
     if (!input) return 0;
     input = input.toLowerCase();
-
     if (input.includes("k")) return parseInt(input) * 1000;
     if (input.includes("tr")) return parseInt(input) * 1000000;
-
     return parseInt(input.replace(/[^0-9]/g, ""));
 }
 
@@ -68,7 +65,7 @@ async function createPayment(amount, userId) {
     const body = {
         amount,
         cancelUrl: "https://google.com",
-        description: `U${userId.slice(-6)}`, // ≤ 25 ký tự
+        description: `U${userId.slice(-6)}`,
         orderCode,
         returnUrl: "https://google.com"
     };
@@ -146,7 +143,6 @@ client.on("messageCreate", async (message) => {
             files: [{ attachment: qr, name: "qr.png" }]
         });
 
-        // Lưu orderCode kiểu number
         pendingPayments.set(Number(payment.orderCode), {
             messageId: sent.id,
             channelId: sent.channel.id,
@@ -169,9 +165,7 @@ app.post("/webhook", async (req, res) => {
     const data = req.body;
 
     if (data.code === "00" && data.data) {
-        console.log("✅ THANH TOÁN THÀNH CÔNG");
-
-        const orderCode = Number(data.data.orderCode); // ép kiểu number
+        const orderCode = Number(data.data.orderCode);
         console.log("🔎 ORDER:", orderCode);
 
         const payment = pendingPayments.get(orderCode);
@@ -193,11 +187,9 @@ app.post("/webhook", async (req, res) => {
                     await msg.edit({ embeds: [embed], files: [] });
                 }
 
-                // LOG
                 const log = await client.channels.fetch(process.env.LOG_CHANNEL_ID).catch(() => null);
                 if (log) log.send(`💰 <@${payment.userId}> đã thanh toán ${payment.amount}`);
 
-                // DM USER
                 const user = await client.users.fetch(payment.userId).catch(() => null);
                 if (user) user.send("✅ Bạn đã thanh toán thành công!");
 
