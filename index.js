@@ -158,17 +158,15 @@ client.on("messageCreate", async (message) => {
 
 // ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
-    console.log("📡 WEBHOOK RAW:", JSON.stringify(req.body, null, 2));
     const data = req.body;
+    console.log("📡 WEBHOOK RAW:", JSON.stringify(data, null, 2));
 
-    if (data.code === "00" && data.data) {
+    if (data.code === "00" && data.data && data.data.orderCode) {
         const orderCode = Number(data.data.orderCode);
-        console.log("🔎 orderCode:", orderCode);
+        console.log("🔎 orderCode nhận:", orderCode);
         console.log("📦 PendingPayments keys:", Array.from(pendingPayments.keys()));
 
         const payment = pendingPayments.get(orderCode);
-        console.log("📦 Payment found:", payment);
-
         if (!payment) {
             console.log("⚠️ Không tìm thấy orderCode trong pendingPayments");
             return res.sendStatus(200);
@@ -176,11 +174,17 @@ app.post("/webhook", async (req, res) => {
 
         try {
             const channel = await client.channels.fetch(payment.channelId);
-            const msg = await channel.messages.fetch(payment.messageId);
+            const msg = await channel.messages.fetch(payment.messageId).catch(() => null);
+            if (!msg) {
+                console.log("⚠️ Message đã bị xóa hoặc không fetch được");
+                return res.sendStatus(200);
+            }
+
             const embed = new EmbedBuilder()
                 .setTitle("🟢 ĐÃ THANH TOÁN")
                 .setDescription(`💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n✅ Thành công`)
                 .setColor(0x00ff00);
+
             await msg.edit({ embeds: [embed], files: [] });
 
             const log = await client.channels.fetch(process.env.LOG_CHANNEL_ID).catch(() => null);
@@ -192,7 +196,7 @@ app.post("/webhook", async (req, res) => {
             pendingPayments.delete(orderCode);
 
         } catch (err) {
-            console.log("❌ Update lỗi:", err);
+            console.log("❌ Lỗi update embed:", err);
         }
     }
 
