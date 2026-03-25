@@ -66,27 +66,27 @@ function parseMoney(input) {
 async function createPayment(amount, userId) {
     const orderCode = Date.now();
 
+    // 🔥 description NGẮN ≤ 25 ký tự
+    const shortDesc = `U${userId.slice(-6)}_${orderCode.toString().slice(-6)}`;
+
     const body = {
-        orderCode,
-        amount,
-        description: `USER_${userId}_${orderCode}`,
-        returnUrl: "https://google.com",
-        cancelUrl: "https://google.com"
+        amount: amount,
+        cancelUrl: "https://google.com",
+        description: shortDesc,
+        orderCode: orderCode,
+        returnUrl: "https://google.com"
     };
 
-    // 🔥 SIGNATURE CHUẨN
-    const dataString =
-        `amount=${amount}` +
-        `&cancelUrl=${body.cancelUrl}` +
-        `&description=${body.description}` +
-        `&orderCode=${orderCode}` +
-        `&returnUrl=${body.returnUrl}`;
+    // 🔥 SORT KEY
+    const sortedKeys = Object.keys(body).sort();
+    const dataString = sortedKeys.map(k => `${k}=${body[k]}`).join("&");
 
     const signature = crypto
         .createHmac("sha256", process.env.PAYOS_CHECKSUM_KEY)
         .update(dataString)
         .digest("hex");
 
+    console.log("📜 STRING:", dataString);
     console.log("🔐 SIGN:", signature);
 
     const res = await fetch("https://api-merchant.payos.vn/v2/payment-requests", {
@@ -100,7 +100,6 @@ async function createPayment(amount, userId) {
     });
 
     const json = await res.json();
-
     console.log("📦 PAYOS RESPONSE:", json);
 
     if (!json.data) {
@@ -165,13 +164,12 @@ client.on("messageCreate", async (message) => {
 // ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
     const data = req.body;
-
     console.log("📡 WEBHOOK:", data);
 
     if (data.code === "00" && data.data) {
         const orderCode = data.data.orderCode;
-
         const payment = pendingPayments.get(orderCode);
+
         if (!payment) return res.sendStatus(200);
 
         try {
@@ -207,7 +205,7 @@ app.post("/webhook", async (req, res) => {
     res.sendStatus(200);
 });
 
-// ===== SERVER =====
+// ===== START SERVER =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log("🌐 Server chạy:", PORT);
