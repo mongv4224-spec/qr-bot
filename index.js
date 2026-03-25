@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const https = require("https");
 const crypto = require("crypto");
-const fetch = require("node-fetch"); // node-fetch@2
+const fetch = require("node-fetch"); // dùng node-fetch@2
 const {
     Client,
     GatewayIntentBits,
@@ -60,7 +60,7 @@ function parseMoney(input) {
 
 // ===== CREATE PAYOS =====
 async function createPayment(amount, userId) {
-    const orderCode = Date.now(); // number
+    const orderCode = Date.now();
 
     const body = {
         amount,
@@ -102,7 +102,6 @@ async function createPayment(amount, userId) {
 function getQR(amount, content) {
     return new Promise((resolve, reject) => {
         const url = `https://img.vietqr.io/image/${BANK_ID}-${ACCOUNT_NO}-compact.png?amount=${amount}&addInfo=${encodeURIComponent(content)}&accountName=${encodeURIComponent(ACCOUNT_NAME)}`;
-
         https.get(url, (res) => {
             const data = [];
             res.on("data", chunk => data.push(chunk));
@@ -124,7 +123,6 @@ client.on("messageCreate", async (message) => {
 
     try {
         const payment = await createPayment(amount, message.author.id);
-
         const content = `PAY${payment.orderCode}`;
         const qr = await getQR(amount, content);
 
@@ -161,29 +159,21 @@ client.on("messageCreate", async (message) => {
 // ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
     console.log("📡 WEBHOOK RAW:", JSON.stringify(req.body, null, 2));
-
     const data = req.body;
 
     if (data.code === "00" && data.data) {
         const orderCode = Number(data.data.orderCode);
-        console.log("🔎 ORDER:", orderCode);
-
         const payment = pendingPayments.get(orderCode);
-        console.log("📦 FOUND:", payment);
 
         if (payment) {
             try {
                 const channel = await client.channels.fetch(payment.channelId);
                 const msg = await channel.messages.fetch(payment.messageId).catch(() => null);
-
                 if (msg) {
                     const embed = new EmbedBuilder()
                         .setTitle("🟢 ĐÃ THANH TOÁN")
-                        .setDescription(
-                            `💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n✅ Thành công`
-                        )
+                        .setDescription(`💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n✅ Thành công`)
                         .setColor(0x00ff00);
-
                     await msg.edit({ embeds: [embed], files: [] });
                 }
 
@@ -196,7 +186,6 @@ app.post("/webhook", async (req, res) => {
             } catch (err) {
                 console.log("❌ Update lỗi:", err);
             }
-
             pendingPayments.delete(orderCode);
         } else {
             console.log("⚠️ Không tìm thấy orderCode trong pendingPayments");
@@ -209,10 +198,8 @@ app.post("/webhook", async (req, res) => {
 // ===== CHECK ORDERCODE COMMAND =====
 client.on("messageCreate", message => {
     if (!message.content.startsWith("!check")) return;
-
     const orderCode = Number(message.content.split(" ")[1]);
     const payment = pendingPayments.get(orderCode);
-
     if (payment) {
         message.reply(`✅ Found payment: ${payment.amount} VNĐ, user: <@${payment.userId}>`);
     } else {
