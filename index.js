@@ -3,6 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const https = require("https");
 const crypto = require("crypto");
+const fetch = require("node-fetch");
 const {
     Client,
     GatewayIntentBits,
@@ -62,7 +63,7 @@ function parseMoney(input) {
 
 // ===== CREATE PAYOS =====
 async function createPayment(amount, userId) {
-    const orderCode = Date.now();
+    const orderCode = Date.now(); // number
 
     const body = {
         amount,
@@ -145,12 +146,15 @@ client.on("messageCreate", async (message) => {
             files: [{ attachment: qr, name: "qr.png" }]
         });
 
-        pendingPayments.set(payment.orderCode, {
+        // Lưu orderCode kiểu number
+        pendingPayments.set(Number(payment.orderCode), {
             messageId: sent.id,
             channelId: sent.channel.id,
             userId: message.author.id,
             amount
         });
+
+        console.log("🆕 Payment created:", payment.orderCode);
 
     } catch (err) {
         console.log("❌ PayOS lỗi:", err.message);
@@ -160,46 +164,68 @@ client.on("messageCreate", async (message) => {
 
 // ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
+    console.log("📡 WEBHOOK RAW:", JSON.stringify(req.body, null, 2));
+
     const data = req.body;
-    console.log("📡 WEBHOOK:", data);
 
     if (data.code === "00" && data.data) {
-        const orderCode = data.data.orderCode;
+        console.log("✅ THANH TOÁN THÀNH CÔNG");
+
+        const orderCode = Number(data.data.orderCode); // ép kiểu number
+        console.log("🔎 ORDER:", orderCode);
+
         const payment = pendingPayments.get(orderCode);
+        console.log("📦 FOUND:", payment);
 
-        if (!payment) return res.sendStatus(200);
+        if (payment) {
+            try {
+                const channel = await client.channels.fetch(payment.channelId);
+                const msg = await channel.messages.fetch(payment.messageId).catch(() => null);
 
-        try {
-            const channel = await client.channels.fetch(payment.channelId);
-            const msg = await channel.messages.fetch(payment.messageId);
+                if (msg) {
+                    const embed = new EmbedBuilder()
+                        .setTitle("🟢 ĐÃ THANH TOÁN")
+                        .setDescription(
+                            `💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n✅ Thành công`
+                        )
+                        .setColor(0x00ff00);
 
-            const embed = new EmbedBuilder()
-                .setTitle("🟢 ĐÃ THANH TOÁN")
-                .setDescription(
-                    `💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n✅ Thành công`
-                )
-                .setColor(0x00ff00);
+                    await msg.edit({ embeds: [embed], files: [] });
+                }
 
-            await msg.edit({ embeds: [embed], files: [] });
+                // LOG
+                const log = await client.channels.fetch(process.env.LOG_CHANNEL_ID).catch(() => null);
+                if (log) log.send(`💰 <@${payment.userId}> đã thanh toán ${payment.amount}`);
 
-            // LOG
-            const log = await client.channels.fetch(process.env.LOG_CHANNEL_ID);
-            if (log) {
-                log.send(`💰 <@${payment.userId}> đã thanh toán ${payment.amount}`);
+                // DM USER
+                const user = await client.users.fetch(payment.userId).catch(() => null);
+                if (user) user.send("✅ Bạn đã thanh toán thành công!");
+
+            } catch (err) {
+                console.log("❌ Update lỗi:", err);
             }
 
-            // DM USER
-            const user = await client.users.fetch(payment.userId);
-            user.send("✅ Bạn đã thanh toán thành công!");
-
             pendingPayments.delete(orderCode);
-
-        } catch (err) {
-            console.log("❌ Update lỗi:", err);
+        } else {
+            console.log("⚠️ Không tìm thấy orderCode trong pendingPayments");
         }
     }
 
     res.sendStatus(200);
+});
+
+// ===== CHECK ORDERCODE COMMAND =====
+client.on("messageCreate", message => {
+    if (!message.content.startsWith("!check")) return;
+
+    const orderCode = Number(message.content.split(" ")[1]);
+    const payment = pendingPayments.get(orderCode);
+
+    if (payment) {
+        message.reply(`✅ Found payment: ${payment.amount} VNĐ, user: <@${payment.userId}>`);
+    } else {
+        message.reply("❌ Không tìm thấy orderCode này!");
+    }
 });
 
 // ===== START SERVER =====
