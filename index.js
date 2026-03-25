@@ -1,10 +1,16 @@
 require("dotenv").config();
 
 const express = require("express");
-const { Client, GatewayIntentBits, EmbedBuilder, PermissionsBitField } = require("discord.js");
+const https = require("https");
 const crypto = require("crypto");
+const { 
+    Client, 
+    GatewayIntentBits, 
+    EmbedBuilder, 
+    PermissionsBitField 
+} = require("discord.js");
 
-// ===== CONFIG =====
+// ===== CONFIG PAYOS =====
 const PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID;
 const PAYOS_API_KEY = process.env.PAYOS_API_KEY;
 const PAYOS_CHECKSUM_KEY = process.env.PAYOS_CHECKSUM_KEY;
@@ -28,6 +34,9 @@ client.once("ready", () => {
 
 client.login(process.env.DISCORD_TOKEN);
 
+// ===== LƯU MESSAGE =====
+const pendingPayments = new Map();
+
 // ===== CHECK ROLE =====
 function hasPermission(member) {
     if (!member) return false;
@@ -47,14 +56,14 @@ function parseMoney(input) {
     return parseInt(input.replace(/[^0-9]/g, ""));
 }
 
-// ===== TẠO LINK PAYOS =====
+// ===== TẠO PAYOS =====
 async function createPayment(amount, userId) {
     const orderCode = Date.now();
 
     const body = {
         orderCode,
         amount,
-        description: `USER_${userId}`,
+        description: `USER_${userId}_${orderCode}`,
         returnUrl: "https://google.com",
         cancelUrl: "https://google.com"
     };
@@ -73,10 +82,7 @@ async function createPayment(amount, userId) {
             "x-api-key": PAYOS_API_KEY,
             "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-            ...body,
-            signature
-        })
+        body: JSON.stringify({ ...body, signature })
     });
 
     const json = await res.json();
@@ -91,58 +97,88 @@ client.on("messageCreate", async (message) => {
         return message.reply("⛔ Không có quyền!");
     }
 
-    const args = message.content.split(" ").slice(1);
-    const amount = parseMoney(args[0]);
-
+    const amount = parseMoney(message.content.split(" ")[1]);
     if (!amount) return message.reply("❌ Ví dụ: !qr 50k");
 
     try {
         const payment = await createPayment(amount, message.author.id);
 
-        const embed = new EmbedBuilder()
-            .setTitle("💰 THANH TOÁN PAYOS")
-            .setDescription(
-                `💵 Số tiền: **${amount.toLocaleString("vi-VN")} VNĐ**\n\n` +
-                `👉 Nhấn link để thanh toán:\n${payment.checkoutUrl}`
-            )
-            .setColor(0x00ff99);
+        // tạo QR
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payment.checkoutUrl)}`;
 
-        message.channel.send({ embeds: [embed] });
+        const qr = await new Promise((resolve, reject) => {
+            https.get(qrUrl, (res) => {
+                const data = [];
+                res.on("data", chunk => data.push(chunk));
+                res.on("end", () => resolve(Buffer.concat(data)));
+            }).on("error", reject);
+        });
+
+        const embed = new EmbedBuilder()
+            .setTitle("🔴 CHƯA THANH TOÁN")
+            .setDescription(
+                `💵 **${amount.toLocaleString("vi-VN")} VNĐ**\n\n` +
+                `📌 Link:\n${payment.checkoutUrl}`
+            )
+            .setImage("attachment://qr.png")
+            .setColor(0xff0000);
+
+        const sent = await message.channel.send({
+            embeds: [embed],
+            files: [{ attachment: qr, name: "qr.png" }]
+        });
+
+        // lưu để update
+        pendingPayments.set(payment.orderCode, {
+            messageId: sent.id,
+            channelId: sent.channel.id,
+            userId: message.author.id,
+            amount
+        });
 
     } catch (err) {
         console.log(err);
-        message.reply("❌ Lỗi tạo thanh toán!");
+        message.reply("❌ Lỗi PayOS!");
     }
 });
 
-// ===== WEBHOOK PAYOS =====
+// ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
     const data = req.body;
 
-    console.log("📡 PayOS:", data);
+    console.log("📡 Webhook:", data);
 
     if (data.code === "00" && data.data) {
-        const desc = data.data.description || "";
-        const match = desc.match(/USER_(\d+)/);
+        const orderCode = data.data.orderCode;
 
-        if (!match) return res.sendStatus(200);
-
-        const userId = match[1];
+        const payment = pendingPayments.get(orderCode);
+        if (!payment) return res.sendStatus(200);
 
         try {
-            // log kênh
-            const channel = await client.channels.fetch(process.env.LOG_CHANNEL_ID);
+            const channel = await client.channels.fetch(payment.channelId);
+            const msg = await channel.messages.fetch(payment.messageId);
 
-            if (channel) {
-                await channel.send(
-                    `💰 <@${userId}> đã thanh toán thành công!\n` +
-                    `💵 ${data.data.amount.toLocaleString("vi-VN")} VNĐ`
-                );
+            const embed = new EmbedBuilder()
+                .setTitle("🟢 ĐÃ THANH TOÁN")
+                .setDescription(
+                    `💵 **${payment.amount.toLocaleString("vi-VN")} VNĐ**\n\n` +
+                    `✅ Thành công`
+                )
+                .setColor(0x00ff00);
+
+            await msg.edit({ embeds: [embed], files: [] });
+
+            // log
+            const log = await client.channels.fetch(process.env.LOG_CHANNEL_ID);
+            if (log) {
+                log.send(`💰 <@${payment.userId}> đã thanh toán ${payment.amount}`);
             }
 
-            // dm user
-            const user = await client.users.fetch(userId);
-            await user.send("✅ Thanh toán thành công!");
+            // dm
+            const user = await client.users.fetch(payment.userId);
+            user.send("✅ Thanh toán thành công!");
+
+            pendingPayments.delete(orderCode);
 
         } catch (err) {
             console.log(err);
@@ -153,6 +189,10 @@ app.post("/webhook", async (req, res) => {
 });
 
 // ===== SERVER =====
+app.get("/", (req, res) => {
+    res.send("OK");
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log("🌐 Server chạy:", PORT);
