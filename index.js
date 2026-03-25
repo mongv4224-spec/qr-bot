@@ -1,179 +1,136 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
-const axios = require("axios");
-const crypto = require("crypto");
+
 const express = require("express");
-const fs = require("fs");
+const https = require("https");
+const { Client, GatewayIntentBits, EmbedBuilder } = require("discord.js");
 
-// ===== CONFIG =====
-const PORT = process.env.PORT || 3000;
-const ALLOWED_ROLE = process.env.ALLOWED_ROLE || "1412802347821695026"; // role được phép dùng lệnh
-let orders = {};
-
-// ===== DISCORD CLIENT =====
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
-
-// ===== AUTO SET WEBHOOK PAYOS =====
-async function setWebhook() {
-  if (!process.env.PAYOS_CLIENT_ID || !process.env.PAYOS_API_KEY) {
-    console.log("⚠️ PAYOS config thiếu, bỏ qua setWebhook");
-    return;
-  }
-
-  try {
-    await axios.post(
-      "https://api-merchant.payos.vn/confirm-webhook",
-      { webhookUrl: "https://qr-bot-ib4w.onrender.com/payos-webhook" }, 
-      {
-        headers: {
-          "x-client-id": process.env.PAYOS_CLIENT_ID,
-          "x-api-key": process.env.PAYOS_API_KEY
-        },
-        timeout: 10000
-      }
-    );
-    console.log("✅ Webhook PayOS OK");
-  } catch (err) {
-    console.log("⚠️ Webhook lỗi:", err.response?.data || err.message);
-  }
-}
-
-// ===== BOT READY =====
-client.once("ready", async () => {
-  console.log(`🤖 Bot online: ${client.user.tag}`);
-  await setWebhook();
-});
-
-// ===== COMMAND !qr =====
-client.on("messageCreate", async (msg) => {
-  if (!msg.content.startsWith("!qr") || msg.author.bot) return;
-
-  if (!msg.member?.roles?.cache.has(ALLOWED_ROLE)) {
-    return msg.reply("❌ Bạn không có quyền dùng lệnh");
-  }
-
-  const args = msg.content.split(" ")[1];
-  if (!args) return msg.reply("❌ Ví dụ: !qr 5000 hoặc !qr 20k");
-
-  let amount;
-  if (args.toLowerCase().endsWith("k")) {
-    amount = parseInt(args.toLowerCase().replace("k","000"), 10);
-  } else {
-    amount = parseInt(args.replace(/[,\.]/g,""), 10);
-  }
-
-  if (isNaN(amount) || amount < 1000) {
-    return msg.reply("❌ Số tiền không hợp lệ (≥ 1000đ)");
-  }
-
-  const orderCode = Date.now().toString(); // string
-  const body = {
-    orderCode,
-    amount,
-    description: `QR_${msg.author.id}`,
-    returnUrl: "https://google.com",
-    cancelUrl: "https://google.com"
-  };
-
-  const signature = crypto
-    .createHmac("sha256", process.env.PAYOS_CHECKSUM_KEY)
-    .update(JSON.stringify(body))
-    .digest("hex");
-
-  try {
-    const res = await axios.post(
-      "https://api-merchant.payos.vn/v2/payment-requests",
-      body,
-      {
-        headers: {
-          "x-client-id": process.env.PAYOS_CLIENT_ID,
-          "x-api-key": process.env.PAYOS_API_KEY,
-          "x-signature": signature
-        },
-        timeout: 10000
-      }
-    );
-
-    if (!res.data?.data?.qrCode) {
-      return msg.reply("❌ Lỗi PayOS, không tạo được QR");
-    }
-
-    orders[orderCode] = { userId: msg.author.id, channelId: msg.channel.id, amount };
-
-    const embed = new EmbedBuilder()
-      .setTitle("🧾 HOÁ ĐƠN")
-      .addFields(
-        { name: "👤 Khách", value: `<@${msg.author.id}>` },
-        { name: "💰 Số tiền", value: `${amount.toLocaleString()}đ` },
-        { name: "🔢 Mã đơn", value: orderCode },
-        { name: "⏳ Trạng thái", value: "Chờ thanh toán" }
-      )
-      .setImage(res.data.data.qrCode)
-      .setColor("Yellow");
-
-    msg.reply({ embeds: [embed] });
-  } catch (err) {
-    console.error("❌ Lỗi tạo QR:", err.response?.data || err.message);
-    msg.reply("❌ Lỗi tạo QR, kiểm tra log");
-  }
-});
-
-// ===== EXPRESS SERVER =====
+// ===== EXPRESS =====
 const app = express();
 app.use(express.json());
 
-app.post("/payos-webhook", async (req, res) => {
-  const data = req.body;
-
-  if (data.code === "00") {
-    const orderCode = data.data.orderCode;
-    const order = orders[orderCode];
-    if (!order) return res.sendStatus(200);
-
-    try {
-      const channel = await client.channels.fetch(order.channelId);
-      const embed = new EmbedBuilder()
-        .setTitle("✅ ĐÃ THANH TOÁN")
-        .addFields(
-          { name: "👤 Khách", value: `<@${order.userId}>` },
-          { name: "💰 Số tiền", value: `${order.amount.toLocaleString()}đ` },
-          { name: "🔢 Mã đơn", value: orderCode }
-        )
-        .setColor("Green");
-
-      await channel.send({ embeds: [embed] });
-
-      let history = [];
-      try { history = JSON.parse(fs.readFileSync("./orders.json")); } catch {}
-      history.push({ user: order.userId, amount: order.amount, orderCode, time: Date.now() });
-      fs.writeFileSync("./orders.json", JSON.stringify(history, null, 2));
-
-      delete orders[orderCode];
-    } catch (err) {
-      console.error("❌ Lỗi webhook:", err);
-    }
-  }
-
-  res.sendStatus(200);
+// ===== DISCORD =====
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
 });
 
-// ===== LOGIN DISCORD =====
-if (!process.env.TOKEN) {
-  console.error("❌ TOKEN Discord chưa set!");
-} else {
-  client.login(process.env.TOKEN)
-    .then(() => console.log("✅ Đã login Discord"))
-    .catch(err => console.error("❌ TOKEN LỖI:", err));
+client.once("ready", () => {
+    console.log(`✅ Bot online: ${client.user.tag}`);
+});
+
+client.login(process.env.DISCORD_TOKEN);
+
+// ===== CONFIG =====
+const BANK_ID = "970422";
+const ACCOUNT_NO = "0813729700";
+const ACCOUNT_NAME = "TRUONG VO THANH PHONG";
+
+// ===== CHECK ROLE =====
+function hasPermission(member) {
+    return member.roles.cache.has(process.env.ALLOWED_ROLE_ID);
 }
 
-// ===== START SERVER =====
-app.listen(PORT, () => console.log(`🌐 Webhook chạy cổng ${PORT}`));
+// ===== PARSE TIỀN =====
+function parseMoney(input) {
+    input = input.toLowerCase();
 
-// ===== BẮT LỖI ẨN =====
-process.on("unhandledRejection", err => console.error("❌ Lỗi hệ thống:", err));
+    if (input.includes("k")) return parseInt(input) * 1000;
+    if (input.includes("tr")) return parseInt(input) * 1000000;
+
+    return parseInt(input.replace(/[^0-9]/g, ""));
+}
+
+// ===== TẠO QR =====
+async function generateQR(amount, addinfo) {
+    return new Promise((resolve, reject) => {
+        const url = `https://img.vietqr.io/image/${BANK_ID}-${ACCOUNT_NO}-compact.png?amount=${amount}&addInfo=${encodeURIComponent(addinfo)}&accountName=${encodeURIComponent(ACCOUNT_NAME)}`;
+
+        https.get(url, (res) => {
+            if (res.statusCode !== 200) return reject("QR lỗi");
+            const data = [];
+            res.on("data", chunk => data.push(chunk));
+            res.on("end", () => resolve(Buffer.concat(data)));
+        }).on("error", reject);
+    });
+}
+
+// ===== LỆNH !qr =====
+client.on("messageCreate", async (message) => {
+    if (message.author.bot || !message.content.startsWith("!qr")) return;
+
+    if (!hasPermission(message.member)) {
+        return message.reply("⛔ Bạn không có quyền!");
+    }
+
+    const args = message.content.split(" ").slice(1);
+    const amount = parseMoney(args[0]);
+
+    const addinfo = `USER_${message.author.id}`;
+
+    if (!amount || amount <= 0) {
+        return message.reply("❌ Ví dụ: !qr 100k");
+    }
+
+    try {
+        const qr = await generateQR(amount, addinfo);
+
+        const embed = new EmbedBuilder()
+            .setColor(0xffcc00)
+            .setTitle("💰 THANH TOÁN")
+            .setDescription(
+                `💵 Số tiền: **${amount.toLocaleString("vi-VN")} VNĐ**\n\n` +
+                `📌 Nội dung CK: **${addinfo}**\n\n` +
+                `🏦 ${ACCOUNT_NAME}\nMB Bank: ${ACCOUNT_NO}`
+            )
+            .setImage("attachment://qr.png")
+            .setFooter({ text: "Quét QR và thanh toán" })
+            .setTimestamp();
+
+        await message.channel.send({
+            embeds: [embed],
+            files: [{ attachment: qr, name: "qr.png" }]
+        });
+
+    } catch (err) {
+        console.log(err);
+        message.reply("❌ Lỗi tạo QR!");
+    }
+});
+
+// ===== WEBHOOK PAYOS =====
+app.post("/webhook", async (req, res) => {
+    const data = req.body;
+
+    console.log("📡 Webhook:", data);
+
+    if (data.code === "00") {
+        const content = data.data?.description || "";
+        const match = content.match(/USER_(\d+)/);
+
+        if (!match) return res.sendStatus(200);
+
+        const userId = match[1];
+
+        try {
+            const guild = await client.guilds.fetch(process.env.GUILD_ID);
+            const member = await guild.members.fetch(userId);
+
+            await member.roles.add(process.env.ROLE_ID);
+
+            console.log("✅ Add role cho:", userId);
+        } catch (err) {
+            console.log("❌ Lỗi add role:", err);
+        }
+    }
+
+    res.sendStatus(200);
+});
+
+// ===== SERVER =====
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log("🌐 Server chạy cổng", PORT);
+});
